@@ -10,14 +10,12 @@ methods {
     function previewMint(uint256 shares)     external returns(uint256) envfree;
     function previewWithdraw(uint256 assets) external returns(uint256) envfree;
     function previewRedeem(uint256 shares)   external returns(uint256) envfree;
-
-    function withdraw(uint256 assets, address receiver,  address owner) external returns (uint256);
-    function redeem(uint256 shares, address receiver,  address owner)   external returns (uint256);
-    function deposit(uint256 assets, address receiver)                  external returns (uint256);
-    function mint(uint256 shares, address receiver)                     external returns (uint256);
-
 }
 
+
+/*
+ * Partial sums for the ERC4626 token balance
+ */
 
 // Partial sum of balances.
 //   sumOfBalances[x] = \sum_{i=0}^{x-1} balances[i];
@@ -31,7 +29,7 @@ ghost mapping(address => uint256) ghost_balanceOf {
 }
 
 hook Sload uint256 b balanceOf[KEY address addr] {
-    require ghost_balanceOf[addr] == b;
+    require(ghost_balanceOf[addr] == b, "Ghost balance and balance must always remain synced");
 }
 
 /*
@@ -70,3 +68,35 @@ invariant sumOfBalancesEqualsTotalSupply()
         }
     }
 
+/*
+ * Partial sums for the underlying token `asset`
+ */
+
+/* So far I'm just going to copy these. I wonder if it can be parameterised somehow */
+
+
+
+/**************************************************************************/
+
+function safeAssumptions() {
+    requireInvariant sumOfBalancesStartsAtZero();
+    requireInvariant sumOfBalancesGrowsCorrectly();
+    requireInvariant sumOfBalancesMonotone();
+    requireInvariant sumOfBalancesEqualsTotalSupply();
+}
+
+invariant sumOfTwoBalancesCannotExceedTotalSupply(address addr1, address addr2)
+    addr1 != addr2 => ghost_balanceOf[addr1] + ghost_balanceOf[addr2] <= totalSupply()
+    {
+        preserved {
+            safeAssumptions();
+        }
+    }
+
+rule sumOfTwoBalancesCannotExceedTotalSupply2(address addr1, address addr2, env e, method f, calldataarg args)
+filtered { f -> !f.isView }
+{
+    safeAssumptions();
+    f(e, args);
+    assert addr1 != addr2 => ghost_balanceOf[addr1] + ghost_balanceOf[addr2] <= totalSupply();
+}
