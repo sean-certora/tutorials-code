@@ -12,11 +12,24 @@ methods {
     function previewWithdraw(uint256 assets)  external returns(uint256) envfree;
     function previewRedeem(uint256 shares)    external returns(uint256) envfree;
 
+    /* non env-free */
+    function deposit(uint256 assets,address receiver)  external returns(uint256);
+
     /* ERC20 methods */
     function erc20.balanceOf(address)         external returns(uint256) envfree;
     function erc20.totalSupply()              external returns(uint256) envfree;
     function erc20.allowance(address,address) external returns(uint256) envfree;
 }
+
+// ghost mapping(mathint => mathint) sumOfAssetBalances {
+//     init_state axiom forall mathint addr. sumOfAssetBalances[addr] == 0;
+// }
+
+// hook Sload uint256 b erc20.balanceOf[KEY address addr] {
+//     require(ghost_assetBalanceOf[addr] == b, "Ghost balance and balance must always remain synced");
+// }
+
+
 
 /*
  * Partial sums for the ERC4626 vault token balances
@@ -119,23 +132,19 @@ function totalSupplyLessThanTotalAssetsPreserved(env e) {
 /* This makes it impossible for a user to erc20.transferFrom on the ERC4626 contract's behalf */
 invariant noAllowanceForContractOnAsset(address addr)
     erc20.allowance(currentContract, addr) == 0 {
-        // preserved constructor() {
-        //     require erc20.allowance(currentContract, addr) == 0, "asset should have no allowance for currentContract";
-        // }
+        preserved constructor() {
+            require erc20.allowance(currentContract, addr) == 0, "asset should have no allowance for currentContract";
+        }
         preserved with(env e) {
             require e.msg.sender != currentContract;
         }
     }
 
 
+/* "sum of shares cannot exceed the vault's total assets" */
 invariant totalSupplyLessThanTotalAssets()
     totalSupply() <= totalAssets()
     {
-        // preserved erc20.transferFrom(address from, address to, uint256 amount) with (env e) {
-        //     require from != currentContract;
-        //     totalSupplyLessThanTotalAssetsPreserved(e);  // annoying that I need to do this because of no fallthrough behaviour
-        // }
-
         preserved with (env e) {
             require e.msg.sender != currentContract; /* FIXME: Still need to prove this */
             requireInvariant noAllowanceForContractOnAsset(e.msg.sender);
@@ -146,7 +155,7 @@ invariant totalSupplyLessThanTotalAssets()
         }
     }
 
-/* "sum of shares cannot exceed the vault's total assets" */
+/* Redundant */
 invariant sumOfBalancesLessThanEqualTotalAssets()
     sumOfBalances[2^160] <= totalAssets()
     {
@@ -156,9 +165,19 @@ invariant sumOfBalancesLessThanEqualTotalAssets()
         }
     }
 
+ghost bool noDeposits {
+    init_state axiom noDeposits;
+}
+
+hook CALL(uint g, address addr, uint value, uint argsOffs, uint argLength, uint retOffset, uint retLength) uint rc {
+    if(selector == sig:deposit(uint256, address).selector) {
+        require !noDeposits;
+    }
+}
+
 /* "No assets deposited means no shares are minted and vice versa" */
 invariant noDepositsIffNoShares()
-    totalAssets() == 0 <=> totalSupply() == 0
+    noDeposits <=> totalSupply() == 0
     {
         preserved with (env e) {
             safeAssumptions(e);
@@ -183,7 +202,7 @@ function safeAssumptions(env e) {
 
 /* Just a fun rule I wrote */
 rule assetsCanExistWithZeroTotalAssetsExceptAfterDeposit(method f, env e, calldataarg args) {
-    require f.selector != sig:deposit(uint256,address).selector;
+    require f.selector == sig:deposit(uint256, address).selector;
     f(e, args);
     satisfy erc20.balanceOf(currentContract) > 0 && totalSupply() == 0;
 }
