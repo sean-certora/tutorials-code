@@ -138,7 +138,7 @@ invariant sumOfBalancesLessThanEqualTotalAssets()
     {
         preserved with (env e) {
             safeAssumptions(e);
-            requireInvariant totalSupplyLessThanTotalAssets();
+            requireInvariant totalSupplyLessThanTotalEqualAssets();
         }
     }
 
