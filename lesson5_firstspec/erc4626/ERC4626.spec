@@ -1,20 +1,25 @@
+using ERC20Concrete as erc20;
 
 methods {
-    function balanceOf(address)              external returns(uint256) envfree;
-    function allowance(address,address)      external returns(uint256) envfree;
-    function totalSupply()                   external returns(uint256) envfree;
-    function totalAssets()                   external returns(uint256) envfree;
-    function convertToShares(uint256 assets) external returns(uint256) envfree;
-    function convertToAssets(uint256 shares) external returns(uint256) envfree;
-    function previewDeposit(uint256 assets)  external returns(uint256) envfree;
-    function previewMint(uint256 shares)     external returns(uint256) envfree;
-    function previewWithdraw(uint256 assets) external returns(uint256) envfree;
-    function previewRedeem(uint256 shares)   external returns(uint256) envfree;
+    function balanceOf(address)               external returns(uint256) envfree;
+    function allowance(address,address)       external returns(uint256) envfree;
+    function totalSupply()                    external returns(uint256) envfree;
+    function totalAssets()                    external returns(uint256) envfree;
+    function convertToShares(uint256 assets)  external returns(uint256) envfree;
+    function convertToAssets(uint256 shares)  external returns(uint256) envfree;
+    function previewDeposit(uint256 assets)   external returns(uint256) envfree;
+    function previewMint(uint256 shares)      external returns(uint256) envfree;
+    function previewWithdraw(uint256 assets)  external returns(uint256) envfree;
+    function previewRedeem(uint256 shares)    external returns(uint256) envfree;
+
+    /* ERC20 methods */
+    function erc20.balanceOf(address)         external returns(uint256) envfree;
+    function erc20.totalSupply()              external returns(uint256) envfree;
+    function erc20.allowance(address,address) external returns(uint256) envfree;
 }
 
-
 /*
- * Partial sums for the ERC4626 token balance
+ * Partial sums for the ERC4626 vault token balances
  */
 
 // Partial sum of balances.
@@ -49,6 +54,7 @@ invariant sumOfBalancesGrowsCorrectly()
     forall address addr. sumOfBalances[to_mathint(addr) + 1] ==
         sumOfBalances[to_mathint(addr)] + ghost_balanceOf[addr];
 
+/* "minting shares is monotonic" */
 invariant sumOfBalancesMonotone()
     forall mathint i. forall mathint j. (i <= j) => (sumOfBalances[i] <= sumOfBalances[j])
     {
@@ -58,6 +64,7 @@ invariant sumOfBalancesMonotone()
         }
     }
 
+/* "Total supply of the vault is the sum of its balances" */
 invariant sumOfBalancesEqualsTotalSupply()
     sumOfBalances[2^160] == to_mathint(totalSupply())
     {
@@ -68,35 +75,123 @@ invariant sumOfBalancesEqualsTotalSupply()
         }
     }
 
+/*******************************************************************************************/
+
+
 /*
- * Partial sums for the underlying token `asset`
+ * Here I used ghosts to _constrain_ the allowable havoced state of currentContract.asset
  */
 
-/* So far I'm just going to copy these. I wonder if it can be parameterised somehow */
+ghost mapping(address => uint256) ghost_assetBalanceOf;
+
+ghost uint256 ghost_assetTotalSupply {
+    /* WARNING: Unproved but should be true for any ERC20 token */
+    axiom ghost_assetTotalSupply == (usum address a. ghost_assetBalanceOf[a]);
+}
+
+hook Sload uint256 b erc20.balanceOf[KEY address addr] {
+    if (erc20 == currentContract.asset) {
+        require(ghost_assetBalanceOf[addr] == b, "assetBalanceOf must always remain synced");
+    }
+}
+
+hook Sload uint256 s erc20.totalSupply {
+    if (erc20 == currentContract.asset) {
+        require(ghost_assetTotalSupply == s, "assetTotalSupply must always remain synced");
+    }
+}
+
+hook Sstore erc20.totalSupply uint256 s1 (uint256 s0) {
+    if (erc20 == currentContract.asset) {
+        ghost_assetTotalSupply = s1;
+    }
+}
+
+hook Sstore erc20.balanceOf[KEY address addr] uint256 b1 (uint256 b0) {
+    if (erc20 == currentContract.asset) {
+        ghost_assetBalanceOf[addr] = b1;
+    }
+}
+
+function totalSupplyLessThanTotalAssetsPreserved(env e) {
+}
+
+/* This makes it impossible for a user to erc20.transferFrom on the ERC4626 contract's behalf */
+invariant noAllowanceForContractOnAsset(address addr)
+    erc20.allowance(currentContract, addr) == 0 {
+        // preserved constructor() {
+        //     require erc20.allowance(currentContract, addr) == 0, "asset should have no allowance for currentContract";
+        // }
+        preserved with(env e) {
+            require e.msg.sender != currentContract;
+        }
+    }
+
+
+invariant totalSupplyLessThanTotalAssets()
+    totalSupply() <= totalAssets()
+    {
+        // preserved erc20.transferFrom(address from, address to, uint256 amount) with (env e) {
+        //     require from != currentContract;
+        //     totalSupplyLessThanTotalAssetsPreserved(e);  // annoying that I need to do this because of no fallthrough behaviour
+        // }
+
+        preserved with (env e) {
+            require e.msg.sender != currentContract; /* FIXME: Still need to prove this */
+            requireInvariant noAllowanceForContractOnAsset(e.msg.sender);
+            requireInvariant sumOfBalancesStartsAtZero();
+            requireInvariant sumOfBalancesGrowsCorrectly();
+            requireInvariant sumOfBalancesMonotone();
+            requireInvariant sumOfBalancesEqualsTotalSupply();
+        }
+    }
+
+/* "sum of shares cannot exceed the vault's total assets" */
+invariant sumOfBalancesLessThanEqualTotalAssets()
+    sumOfBalances[2^160] <= totalAssets()
+    {
+        preserved with (env e) {
+            safeAssumptions(e);
+            requireInvariant totalSupplyLessThanTotalAssets();
+        }
+    }
+
+/* "No assets deposited means no shares are minted and vice versa" */
+invariant noDepositsIffNoShares()
+    totalAssets() == 0 <=> totalSupply() == 0
+    {
+        preserved with (env e) {
+            safeAssumptions(e);
+        }
+    }
+
+/* "minting shares is monotonic" */
+// invariant shareMonotonicity
+    /* i < j => f(i) <= f(j) */
 
 
 
-/**************************************************************************/
 
-function safeAssumptions() {
+function safeAssumptions(env e) {
+    require e.msg.sender != currentContract; /* FIXME: still need to prove this! */
+    requireInvariant noAllowanceForContractOnAsset(e.msg.sender);
     requireInvariant sumOfBalancesStartsAtZero();
     requireInvariant sumOfBalancesGrowsCorrectly();
     requireInvariant sumOfBalancesMonotone();
     requireInvariant sumOfBalancesEqualsTotalSupply();
 }
 
-invariant sumOfTwoBalancesCannotExceedTotalSupply(address addr1, address addr2)
-    addr1 != addr2 => ghost_balanceOf[addr1] + ghost_balanceOf[addr2] <= totalSupply()
-    {
-        preserved {
-            safeAssumptions();
-        }
-    }
+/* Just a fun rule I wrote */
+rule assetsCanExistWithZeroTotalAssetsExceptAfterDeposit(method f, env e, calldataarg args) {
+    require f.selector != sig:deposit(uint256,address).selector;
+    f(e, args);
+    satisfy erc20.balanceOf(currentContract) > 0 && totalSupply() == 0;
+}
 
-rule sumOfTwoBalancesCannotExceedTotalSupply2(address addr1, address addr2, env e, method f, calldataarg args)
+rule sumOfTwoBalancesCannotExceedTotalSupply(address addr1, address addr2, env e, method f, calldataarg args)
 filtered { f -> !f.isView }
 {
-    safeAssumptions();
+    safeAssumptions(e);
     f(e, args);
     assert addr1 != addr2 => ghost_balanceOf[addr1] + ghost_balanceOf[addr2] <= totalSupply();
 }
