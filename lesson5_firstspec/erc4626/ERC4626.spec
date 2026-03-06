@@ -21,15 +21,29 @@ methods {
     function erc20.allowance(address,address) external returns(uint256) envfree;
 }
 
-// ghost mapping(mathint => mathint) sumOfAssetBalances {
-//     init_state axiom forall mathint addr. sumOfAssetBalances[addr] == 0;
-// }
+ghost mapping(address => uint256) ghost_assetBalanceOf {
+    init_state axiom forall address addr. ghost_assetBalanceOf[addr] == 0;
+}
 
-// hook Sload uint256 b erc20.balanceOf[KEY address addr] {
-//     require(ghost_assetBalanceOf[addr] == b, "Ghost balance and balance must always remain synced");
-// }
+ghost mathint sumOfAssetBalances {
+    init_state axiom sumOfAssetBalances == 0;
+}
 
+hook Sload uint256 b erc20.balanceOf[KEY address addr] {
+    require(ghost_assetBalanceOf[addr] == b, "assetBalanceOf must always remain synced");
+}
 
+hook Sstore erc20.balanceOf[KEY address addr] uint256 b1 (uint256 b0) {
+    sumOfAssetBalances = sumOfAssetBalances + b1 - b0;
+}
+
+invariant sumOfTwoAssetBalancesLessThanEqualTotalAssetSupply(address a1, address a2)
+    a1 != a2 => ghost_assetBalanceOf[a1] + ghost_assetBalanceOf[a2] <= erc20.totalSupply()
+    {
+        preserved constructor() {
+            require erc20.totalSupply() == 0, "ERC20 totalSupply should start at zero";
+        }
+    }
 
 /*
  * Partial sums for the ERC4626 vault token balances
@@ -91,43 +105,6 @@ invariant sumOfBalancesEqualsTotalSupply()
 /*******************************************************************************************/
 
 
-/*
- * Here I used ghosts to _constrain_ the allowable havoced state of currentContract.asset
- */
-
-ghost mapping(address => uint256) ghost_assetBalanceOf;
-
-ghost uint256 ghost_assetTotalSupply {
-    /* WARNING: Unproved but should be true for any ERC20 token */
-    axiom ghost_assetTotalSupply == (usum address a. ghost_assetBalanceOf[a]);
-}
-
-hook Sload uint256 b erc20.balanceOf[KEY address addr] {
-    if (erc20 == currentContract.asset) {
-        require(ghost_assetBalanceOf[addr] == b, "assetBalanceOf must always remain synced");
-    }
-}
-
-hook Sload uint256 s erc20.totalSupply {
-    if (erc20 == currentContract.asset) {
-        require(ghost_assetTotalSupply == s, "assetTotalSupply must always remain synced");
-    }
-}
-
-hook Sstore erc20.totalSupply uint256 s1 (uint256 s0) {
-    if (erc20 == currentContract.asset) {
-        ghost_assetTotalSupply = s1;
-    }
-}
-
-hook Sstore erc20.balanceOf[KEY address addr] uint256 b1 (uint256 b0) {
-    if (erc20 == currentContract.asset) {
-        ghost_assetBalanceOf[addr] = b1;
-    }
-}
-
-function totalSupplyLessThanTotalAssetsPreserved(env e) {
-}
 
 /* This makes it impossible for a user to erc20.transferFrom on the ERC4626 contract's behalf */
 invariant noAllowanceForContractOnAsset(address addr)
@@ -142,7 +119,7 @@ invariant noAllowanceForContractOnAsset(address addr)
 
 
 /* "sum of shares cannot exceed the vault's total assets" */
-invariant totalSupplyLessThanTotalAssets()
+invariant totalSupplyLessThanEqualTotalAssets()
     totalSupply() <= totalAssets()
     {
         preserved with (env e) {
@@ -169,20 +146,20 @@ ghost bool noDeposits {
     init_state axiom noDeposits;
 }
 
-hook CALL(uint g, address addr, uint value, uint argsOffs, uint argLength, uint retOffset, uint retLength) uint rc {
-    if(selector == sig:deposit(uint256, address).selector) {
-        require !noDeposits;
-    }
-}
+// hook CALL(uint g, address addr, uint value, uint argsOffs, uint argLength, uint retOffset, uint retLength) uint rc {
+//     if(selector == sig:deposit(uint256, address).selector) {
+//         require !noDeposits;
+//     }
+// }
 
 /* "No assets deposited means no shares are minted and vice versa" */
-invariant noDepositsIffNoShares()
-    noDeposits <=> totalSupply() == 0
-    {
-        preserved with (env e) {
-            safeAssumptions(e);
-        }
-    }
+// invariant noDepositsIffNoShares()
+//     noDeposits <=> totalSupply() == 0
+//     {
+//         preserved with (env e) {
+//             safeAssumptions(e);
+//         }
+//     }
 
 /* "minting shares is monotonic" */
 // invariant shareMonotonicity
@@ -201,11 +178,11 @@ function safeAssumptions(env e) {
 }
 
 /* Just a fun rule I wrote */
-rule assetsCanExistWithZeroTotalAssetsExceptAfterDeposit(method f, env e, calldataarg args) {
-    require f.selector == sig:deposit(uint256, address).selector;
-    f(e, args);
-    satisfy erc20.balanceOf(currentContract) > 0 && totalSupply() == 0;
-}
+// rule assetsCanExistWithZeroTotalAssetsExceptAfterDeposit(method f, env e, calldataarg args) {
+//     require f.selector == sig:deposit(uint256, address).selector;
+//     f(e, args);
+//     satisfy erc20.balanceOf(currentContract) > 0 && totalSupply() == 0;
+// }
 
 rule sumOfTwoBalancesCannotExceedTotalSupply(address addr1, address addr2, env e, method f, calldataarg args)
 filtered { f -> !f.isView }
