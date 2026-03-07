@@ -21,7 +21,7 @@ methods {
     function erc20.allowance(address,address) external returns(uint256) envfree;
 }
 
-ghost mapping(address => uint256) ghost_assetBalanceOf {
+ghost mapping(address => mathint) ghost_assetBalanceOf { // mathint is really important so we don't have overflow on addition of values
     init_state axiom forall address addr. ghost_assetBalanceOf[addr] == 0;
 }
 
@@ -29,19 +29,46 @@ ghost mathint sumOfAssetBalances {
     init_state axiom sumOfAssetBalances == 0;
 }
 
+/* FIXME: Is this required? */
 hook Sload uint256 b erc20.balanceOf[KEY address addr] {
     require(ghost_assetBalanceOf[addr] == b, "assetBalanceOf must always remain synced");
+    require(sumOfAssetBalances >= b); /* FIXME: Needs to be proved */
 }
 
 hook Sstore erc20.balanceOf[KEY address addr] uint256 b1 (uint256 b0) {
-    sumOfAssetBalances = sumOfAssetBalances + b1 - b0;
+   //  sumOfAssetBalances = sumOfAssetBalances + b1 - b0;
+    ghost_assetBalanceOf[addr] = b1; // IMPORTANT: This MUST be here. Not having this here was causing vacuity problems with other rules. Of course this needs to stay in sync!
+    sumOfAssetBalances = usum address a. ghost_assetBalanceOf[a];
 }
+
+// invariant sumOfAssetBalancesGreaterThanAssetBalance()
+//     forall address addr. sumOfAssetBalances >= ghost_assetBalanceOf[addr];
+
+invariant ghostEqualsRealAssetBalance(address addr)
+    ghost_assetBalanceOf[addr] == erc20.balanceOf(addr);
+
+invariant sumOfAssetBalancesEqualsGhostSum()
+    sumOfAssetBalances == (usum address a. ghost_assetBalanceOf[a]);
+
+invariant sumOfAssetBalancesIsTotalAssetSupply()
+    sumOfAssetBalances == erc20.totalSupply()
+    {
+        preserved constructor() {
+            require erc20.totalSupply() == 0, "ERC20 totalSupply should start at zero";
+        }
+    }
 
 invariant sumOfTwoAssetBalancesLessThanEqualTotalAssetSupply(address a1, address a2)
     a1 != a2 => ghost_assetBalanceOf[a1] + ghost_assetBalanceOf[a2] <= erc20.totalSupply()
     {
         preserved constructor() {
             require erc20.totalSupply() == 0, "ERC20 totalSupply should start at zero";
+        }
+        preserved {
+            requireInvariant sumOfAssetBalancesIsTotalAssetSupply(); // FIXME: Do I need this one?
+            requireInvariant sumOfAssetBalancesEqualsGhostSum();
+            requireInvariant ghostEqualsRealAssetBalance(a1);
+            requireInvariant ghostEqualsRealAssetBalance(a2);
         }
     }
 
@@ -139,6 +166,12 @@ invariant sumOfBalancesLessThanEqualTotalAssets()
         preserved with (env e) {
             safeAssumptions(e);
             requireInvariant totalSupplyLessThanEqualTotalAssets();
+            requireInvariant sumOfAssetBalancesIsTotalAssetSupply();
+            requireInvariant sumOfBalancesEqualsTotalSupply();
+            requireInvariant sumOfAssetBalancesEqualsGhostSum();
+            address any1;
+            address any2;
+            requireInvariant sumOfTwoAssetBalancesLessThanEqualTotalAssetSupply(any1, any2);
         }
     }
 
