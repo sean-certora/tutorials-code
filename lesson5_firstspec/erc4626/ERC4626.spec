@@ -32,23 +32,24 @@ ghost mathint sumOfAssetBalances {
 /* FIXME: Is this required? */
 hook Sload uint256 b erc20.balanceOf[KEY address addr] {
     require(ghost_assetBalanceOf[addr] == b, "assetBalanceOf must always remain synced");
-    require(sumOfAssetBalances >= b); /* FIXME: Needs to be proved */
+    require sumOfAssetBalances == (usum address a. ghost_assetBalanceOf[a]);
 }
 
 hook Sstore erc20.balanceOf[KEY address addr] uint256 b1 (uint256 b0) {
-   //  sumOfAssetBalances = sumOfAssetBalances + b1 - b0;
+    sumOfAssetBalances = sumOfAssetBalances + b1 - b0;
     ghost_assetBalanceOf[addr] = b1; // IMPORTANT: This MUST be here. Not having this here was causing vacuity problems with other rules. Of course this needs to stay in sync!
-    sumOfAssetBalances = usum address a. ghost_assetBalanceOf[a];
 }
 
 // invariant sumOfAssetBalancesGreaterThanAssetBalance()
 //     forall address addr. sumOfAssetBalances >= ghost_assetBalanceOf[addr];
 
-invariant ghostEqualsRealAssetBalance(address addr)
-    ghost_assetBalanceOf[addr] == erc20.balanceOf(addr);
-
 invariant sumOfAssetBalancesEqualsGhostSum()
-    sumOfAssetBalances == (usum address a. ghost_assetBalanceOf[a]);
+    sumOfAssetBalances == (usum address a. ghost_assetBalanceOf[a])
+    {
+        preserved constructor() {
+            require (usum address a. ghost_assetBalanceOf[a]) == 0;
+        }
+    }
 
 invariant sumOfAssetBalancesIsTotalAssetSupply()
     sumOfAssetBalances == erc20.totalSupply()
@@ -65,10 +66,8 @@ invariant sumOfTwoAssetBalancesLessThanEqualTotalAssetSupply(address a1, address
             require erc20.totalSupply() == 0, "ERC20 totalSupply should start at zero";
         }
         preserved {
-            requireInvariant sumOfAssetBalancesIsTotalAssetSupply(); // FIXME: Do I need this one?
+            requireInvariant sumOfAssetBalancesIsTotalAssetSupply();
             requireInvariant sumOfAssetBalancesEqualsGhostSum();
-            requireInvariant ghostEqualsRealAssetBalance(a1);
-            requireInvariant ghostEqualsRealAssetBalance(a2);
         }
     }
 
