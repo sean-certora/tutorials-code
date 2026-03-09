@@ -29,33 +29,37 @@ ghost mathint sumOfAssetBalances {
     init_state axiom sumOfAssetBalances == 0;
 }
 
-/* FIXME: Is this required? */
-hook Sload uint256 b erc20.balanceOf[KEY address addr] {
-    require(ghost_assetBalanceOf[addr] == b, "assetBalanceOf must always remain synced");
-    require sumOfAssetBalances == (usum address a. ghost_assetBalanceOf[a]);
-}
-
 hook Sstore erc20.balanceOf[KEY address addr] uint256 b1 (uint256 b0) {
     sumOfAssetBalances = sumOfAssetBalances + b1 - b0;
     ghost_assetBalanceOf[addr] = b1; // IMPORTANT: This MUST be here. Not having this here was causing vacuity problems with other rules. Of course this needs to stay in sync!
 }
 
-// invariant sumOfAssetBalancesGreaterThanAssetBalance()
-//     forall address addr. sumOfAssetBalances >= ghost_assetBalanceOf[addr];
+invariant ghostAssetBalanceEqualsAssetBalance()
+    forall address a. ghost_assetBalanceOf[a] == erc20.balanceOf[a]
+    {
+        preserved constructor() {
+            require forall address a. erc20.balanceOf[a] == 0;
+        }
+    }
 
 invariant sumOfAssetBalancesEqualsGhostSum()
     sumOfAssetBalances == (usum address a. ghost_assetBalanceOf[a])
     {
         preserved constructor() {
-            require (usum address a. ghost_assetBalanceOf[a]) == 0;
+            require (usum address a. ghost_assetBalanceOf[a]) == 0, "Sum of ghost asset balances should be zero at construction";
         }
+
+        preserved {
+            requireInvariant ghostAssetBalanceEqualsAssetBalance();
+        }
+
     }
 
 invariant sumOfAssetBalancesIsTotalAssetSupply()
     sumOfAssetBalances == erc20.totalSupply()
     {
         preserved constructor() {
-            require erc20.totalSupply() == 0, "ERC20 totalSupply should start at zero";
+            require erc20.totalSupply() == 0, "ERC20 totalSupply should be zero at construction";
         }
     }
 
@@ -68,6 +72,7 @@ invariant sumOfTwoAssetBalancesLessThanEqualTotalAssetSupply(address a1, address
         preserved {
             requireInvariant sumOfAssetBalancesIsTotalAssetSupply();
             requireInvariant sumOfAssetBalancesEqualsGhostSum();
+            requireInvariant ghostAssetBalanceEqualsAssetBalance();
         }
     }
 
