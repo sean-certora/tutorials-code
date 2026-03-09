@@ -61,6 +61,10 @@ invariant sumOfAssetBalancesIsTotalAssetSupply()
         preserved constructor() {
             require erc20.totalSupply() == 0, "ERC20 totalSupply should be zero at construction";
         }
+        preserved {
+            requireInvariant ghostAssetBalanceEqualsAssetBalance();
+            requireInvariant sumOfAssetBalancesEqualsGhostSum();
+        }
     }
 
 invariant sumOfTwoAssetBalancesLessThanEqualTotalAssetSupply(address a1, address a2)
@@ -160,6 +164,9 @@ invariant totalSupplyLessThanEqualTotalAssets()
             requireInvariant sumOfBalancesGrowsCorrectly();
             requireInvariant sumOfBalancesMonotone();
             requireInvariant sumOfBalancesEqualsTotalSupply();
+            requireInvariant ghostAssetBalanceEqualsAssetBalance();
+            requireInvariant sumOfAssetBalancesEqualsGhostSum();
+            requireInvariant sumOfAssetBalancesIsTotalAssetSupply();
         }
     }
 
