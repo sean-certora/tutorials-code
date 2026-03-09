@@ -25,6 +25,10 @@ ghost mapping(address => mathint) ghost_assetBalanceOf { // mathint is really im
     init_state axiom forall address addr. ghost_assetBalanceOf[addr] == 0;
 }
 
+ghost mathint userAssets { // assets that were actually deposited/minted, not donated
+    init_state axiom userAssets == 0;
+}
+
 ghost mathint sumOfAssetBalances {
     init_state axiom sumOfAssetBalances == 0;
 }
@@ -32,6 +36,7 @@ ghost mathint sumOfAssetBalances {
 hook Sstore erc20.balanceOf[KEY address addr] uint256 b1 (uint256 b0) {
     sumOfAssetBalances = sumOfAssetBalances + b1 - b0;
     ghost_assetBalanceOf[addr] = b1; // IMPORTANT: This MUST be here. Not having this here was causing vacuity problems with other rules. Of course this needs to stay in sync!
+
 }
 
 invariant ghostAssetBalanceEqualsAssetBalance()
@@ -193,39 +198,50 @@ invariant sumOfBalancesLessThanEqualTotalAssets()
         }
     }
 
-ghost bool noDeposits {
-    init_state axiom noDeposits;
+
+/*
+ * "No assets deposited means no shares are minted and vice versa"
+ *
+ * Interpretation:
+ *   If there is no positive balance change of assets then there is no positive balance chance of shares, and vice versa
+ *   We explicitly exclude donations
+ */
+
+rule noDepositsIffNoSharesMinted(method f, env e, calldataarg args)
+filtered { f -> !f.isView && f.contract != erc20 } // Must filter out erc20.transfer and erc20.transferFrom i.e. donation to contract
+{
+    safeAssumptions(e);
+    mathint assetsBefore = totalAssets();
+    mathint supplyBefore = totalSupply();
+    f(e, args);
+    mathint assetsAfter = totalAssets();
+    mathint supplyAfter = totalSupply();
+    assert !(assetsBefore < assetsAfter) <=> !(supplyBefore < supplyAfter);
 }
 
-// hook CALL(uint g, address addr, uint value, uint argsOffs, uint argLength, uint retOffset, uint retLength) uint rc {
-//     if(selector == sig:deposit(uint256, address).selector) {
-//         require !noDeposits;
-//     }
-// }
 
-/* "No assets deposited means no shares are minted and vice versa" */
-// invariant noDepositsIffNoShares()
-//     noDeposits <=> totalSupply() == 0
-//     {
-//         preserved with (env e) {
-//             safeAssumptions(e);
-//         }
-//     }
 
 /* "minting shares is monotonic" */
 // invariant shareMonotonicity
     /* i < j => f(i) <= f(j) */
 
 
-
-
 function safeAssumptions(env e) {
-    require e.msg.sender != currentContract; /* FIXME: still need to prove this! */
+    requireInvariant sumOfBalancesStartsAtZero();
+    requireInvariant sumOfBalancesGrowsCorrectly();
+    requireInvariant sumOfBalancesMonotone();
+    requireInvariant sumOfBalancesEqualsTotalSupply();
+
+    require e.msg.sender != currentContract; /* FIXME: Still need to prove this */
     requireInvariant noAllowanceForContractOnAsset(e.msg.sender);
     requireInvariant sumOfBalancesStartsAtZero();
     requireInvariant sumOfBalancesGrowsCorrectly();
     requireInvariant sumOfBalancesMonotone();
     requireInvariant sumOfBalancesEqualsTotalSupply();
+    requireInvariant ghostAssetBalanceEqualsAssetBalance();
+    requireInvariant sumOfAssetBalancesEqualsGhostSum();
+    requireInvariant sumOfAssetBalancesIsTotalAssetSupply();
+    requireInvariant totalSupplyLessThanEqualTotalAssets();
 }
 
 /* Just a fun rule I wrote */
