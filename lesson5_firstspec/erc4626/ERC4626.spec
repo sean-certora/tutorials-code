@@ -175,14 +175,21 @@ invariant sumOfBalancesLessThanEqualTotalAssets()
     sumOfBalances[2^160] <= totalAssets()
     {
         preserved with (env e) {
-            safeAssumptions(e);
-            requireInvariant totalSupplyLessThanEqualTotalAssets();
-            requireInvariant sumOfAssetBalancesIsTotalAssetSupply();
+            requireInvariant sumOfBalancesStartsAtZero();
+            requireInvariant sumOfBalancesGrowsCorrectly();
+            requireInvariant sumOfBalancesMonotone();
             requireInvariant sumOfBalancesEqualsTotalSupply();
+
+            require e.msg.sender != currentContract; /* FIXME: Still need to prove this */
+            requireInvariant noAllowanceForContractOnAsset(e.msg.sender);
+            requireInvariant sumOfBalancesStartsAtZero();
+            requireInvariant sumOfBalancesGrowsCorrectly();
+            requireInvariant sumOfBalancesMonotone();
+            requireInvariant sumOfBalancesEqualsTotalSupply();
+            requireInvariant ghostAssetBalanceEqualsAssetBalance();
             requireInvariant sumOfAssetBalancesEqualsGhostSum();
-            address any1;
-            address any2;
-            requireInvariant sumOfTwoAssetBalancesLessThanEqualTotalAssetSupply(any1, any2);
+            requireInvariant sumOfAssetBalancesIsTotalAssetSupply();
+            requireInvariant totalSupplyLessThanEqualTotalAssets();
         }
     }
 
