@@ -12,9 +12,6 @@ methods {
     function previewWithdraw(uint256 assets)  external returns(uint256) envfree;
     function previewRedeem(uint256 shares)    external returns(uint256) envfree;
 
-    /* non env-free */
-    function deposit(uint256 assets,address receiver)  external returns(uint256);
-
     /* ERC20 methods */
     function erc20.balanceOf(address)         external returns(uint256) envfree;
     function erc20.totalSupply()              external returns(uint256) envfree;
@@ -142,6 +139,15 @@ invariant sumOfBalancesEqualsTotalSupply()
         }
     }
 
+/* An extra rule not asked for */
+rule sumOfTwoBalancesCannotExceedTotalSupply(address addr1, address addr2, env e, method f, calldataarg args)
+filtered { f -> !f.isView }
+{
+    safeAssumptions(e);
+    f(e, args);
+    assert addr1 != addr2 => ghost_balanceOf[addr1] + ghost_balanceOf[addr2] <= totalSupply();
+}
+
 /*******************************************************************************************/
 
 
@@ -219,7 +225,13 @@ filtered { f -> !f.isView && f.contract != erc20 } // Must filter out erc20.tran
     assert !(assetsBefore < assetsAfter) <=> !(supplyBefore < supplyAfter);
 }
 
-
+invariant noAssetsImpliesNoShares()
+    totalAssets() == 0 => totalSupply() == 0 // this is only one way
+    {
+        preserved with (env e) {
+            safeAssumptions(e);
+        }
+    }
 
 /* "minting shares is monotonic" */
 // invariant shareMonotonicity
@@ -242,19 +254,16 @@ function safeAssumptions(env e) {
     requireInvariant sumOfAssetBalancesEqualsGhostSum();
     requireInvariant sumOfAssetBalancesIsTotalAssetSupply();
     requireInvariant totalSupplyLessThanEqualTotalAssets();
+    requireInvariant noAssetsImpliesNoShares();
 }
 
 /* Just a fun rule I wrote */
-// rule assetsCanExistWithZeroTotalAssetsExceptAfterDeposit(method f, env e, calldataarg args) {
-//     require f.selector == sig:deposit(uint256, address).selector;
-//     f(e, args);
-//     satisfy erc20.balanceOf(currentContract) > 0 && totalSupply() == 0;
-// }
-
-rule sumOfTwoBalancesCannotExceedTotalSupply(address addr1, address addr2, env e, method f, calldataarg args)
+rule assetsCanExistWithZeroTotalSupplyExceptAfterDeposit(method f, env e, calldataarg args)
 filtered { f -> !f.isView }
 {
     safeAssumptions(e);
     f(e, args);
-    assert addr1 != addr2 => ghost_balanceOf[addr1] + ghost_balanceOf[addr2] <= totalSupply();
+    assert totalAssets() > 0 && totalSupply() == 0 => f.selector != sig:deposit(uint256,address).selector;
 }
+
+
