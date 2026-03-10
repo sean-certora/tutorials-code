@@ -273,7 +273,32 @@ rule shareMintingMonotonicity2() {
     assert shares0 <= shares1;
 }
 
+/*
+ * "splitting a deposit into two is not favorable for a user"
+ */
+rule splittingADepositIsNotFavorableToUser() {
+    env e;
+    storage init = lastStorage;
+    uint256 assets;
+    uint256 assetsA;
+    uint256 assetsB;
 
+    uint256 shares;
+    uint256 sharesA;
+    uint256 sharesB;
+    address receiver;
+
+    safeAssumptions(e);
+    require assets == assetsA + assetsB;
+
+    shares = deposit(e, assets, receiver) at init;
+
+    sharesA = deposit(e, assetsA, receiver) at init;
+    storage next = lastStorage;
+    sharesB = deposit(e, assetsB, receiver) at next;
+
+    assert sharesA + sharesB <= shares;
+}
 
 function safeAssumptions(env e) {
     requireInvariant sumOfBalancesStartsAtZero();
