@@ -233,9 +233,46 @@ invariant noAssetsImpliesNoShares()
         }
     }
 
-/* "minting shares is monotonic" */
-// invariant shareMonotonicity
-    /* i < j => f(i) <= f(j) */
+/* "minting shares is monotonic" for mint case */
+rule shareMintingMonotonicity1() {
+    env e;
+    storage init = lastStorage;
+
+    uint256 shares0;
+    uint256 shares1;
+    uint256 assets0;
+    uint256 assets1;
+    address receiver;
+
+    safeAssumptions(e);
+    require (shares0 <= shares1);
+
+    assets0 = mint(e, shares0, receiver) at init;
+    assets1 = mint(e, shares1, receiver) at init;
+
+    assert assets0 <= assets1;
+}
+
+/* "minting shares is monotonic" but for deposit case */
+rule shareMintingMonotonicity2() {
+    env e;
+    storage init = lastStorage;
+
+    uint256 shares0;
+    uint256 shares1;
+    uint256 assets0;
+    uint256 assets1;
+    address receiver;
+
+    safeAssumptions(e);
+    require (assets0 <= assets1);
+
+    shares0 = deposit(e, assets0, receiver) at init;
+    shares1 = deposit(e, assets1, receiver) at init;
+
+    assert shares0 <= shares1;
+}
+
 
 
 function safeAssumptions(env e) {
