@@ -22,10 +22,6 @@ ghost mapping(address => mathint) ghost_assetBalanceOf { // mathint is really im
     init_state axiom forall address addr. ghost_assetBalanceOf[addr] == 0;
 }
 
-ghost mathint userAssets { // assets that were actually deposited/minted, not donated
-    init_state axiom userAssets == 0;
-}
-
 ghost mathint sumOfAssetBalances {
     init_state axiom sumOfAssetBalances == 0;
 }
@@ -33,7 +29,6 @@ ghost mathint sumOfAssetBalances {
 hook Sstore erc20.balanceOf[KEY address addr] uint256 b1 (uint256 b0) {
     sumOfAssetBalances = sumOfAssetBalances + b1 - b0;
     ghost_assetBalanceOf[addr] = b1; // IMPORTANT: This MUST be here. Not having this here was causing vacuity problems with other rules. Of course this needs to stay in sync!
-
 }
 
 invariant ghostAssetBalanceEqualsAssetBalance()
@@ -69,8 +64,8 @@ invariant sumOfAssetBalancesIsTotalAssetSupply()
         }
     }
 
-invariant sumOfTwoAssetBalancesLessThanEqualTotalAssetSupply(address a1, address a2)
-    a1 != a2 => ghost_assetBalanceOf[a1] + ghost_assetBalanceOf[a2] <= erc20.totalSupply()
+invariant sumOfTwoAssetBalancesLessThanEqualTotalAssetSupply2()
+    forall address a1. forall address a2. a1 != a2 => erc20.balanceOf[a1] + erc20.balanceOf[a2] <= erc20.totalSupply
     {
         preserved constructor() {
             require erc20.totalSupply() == 0, "ERC20 totalSupply should start at zero";
@@ -79,6 +74,20 @@ invariant sumOfTwoAssetBalancesLessThanEqualTotalAssetSupply(address a1, address
             requireInvariant sumOfAssetBalancesIsTotalAssetSupply();
             requireInvariant sumOfAssetBalancesEqualsGhostSum();
             requireInvariant ghostAssetBalanceEqualsAssetBalance();
+        }
+    }
+
+
+invariant sumOfTwoAssetBalancesLessThanEqualTotalAssetSupply(address a1, address a2)
+    a1 != a2 => erc20.balanceOf[a1] + erc20.balanceOf[a2] <= erc20.totalSupply()
+    {
+        preserved constructor() {
+            require erc20.totalSupply() == 0, "ERC20 totalSupply should start at zero";
+        }
+        preserved {
+            requireInvariant sumOfAssetBalancesIsTotalAssetSupply();
+            requireInvariant sumOfAssetBalancesEqualsGhostSum();
+//            requireInvariant ghostAssetBalanceEqualsAssetBalance();
         }
     }
 
@@ -118,7 +127,6 @@ invariant sumOfBalancesGrowsCorrectly()
     forall address addr. sumOfBalances[to_mathint(addr) + 1] ==
         sumOfBalances[to_mathint(addr)] + ghost_balanceOf[addr];
 
-/* "minting shares is monotonic" */
 invariant sumOfBalancesMonotone()
     forall mathint i. forall mathint j. (i <= j) => (sumOfBalances[i] <= sumOfBalances[j])
     {
@@ -222,7 +230,7 @@ filtered { f -> !f.isView && f.contract != erc20 } // Must filter out erc20.tran
     f(e, args);
     mathint assetsAfter = totalAssets();
     mathint supplyAfter = totalSupply();
-    assert !(assetsBefore < assetsAfter) <=> !(supplyBefore < supplyAfter);
+    assert (assetsBefore >= assetsAfter) <=> (supplyBefore >= supplyAfter);
 }
 
 invariant noAssetsImpliesNoShares()
@@ -251,6 +259,8 @@ rule shareMintingMonotonicity1() {
     assets1 = mint(e, shares1, receiver) at init;
 
     assert assets0 <= assets1;
+
+
 }
 
 /* "minting shares is monotonic" but for deposit case */
@@ -291,13 +301,77 @@ rule splittingADepositIsNotFavorableToUser() {
     safeAssumptions(e);
     require assets == assetsA + assetsB;
 
-    shares = deposit(e, assets, receiver) at init;
+    shares = deposit(e, assets, receiver);
 
     sharesA = deposit(e, assetsA, receiver) at init;
-    storage next = lastStorage;
-    sharesB = deposit(e, assetsB, receiver) at next;
+    sharesB = deposit(e, assetsB, receiver);
 
     assert sharesA + sharesB <= shares;
+}
+
+
+rule revertOnZeroAssetDeposit() {
+    env e;
+    address receiver;
+    deposit@withrevert(e, 0, receiver);
+    assert lastReverted, "deposit should revert on zero assets";
+}
+
+rule revertOnZeroAssetsRedeemed() {
+    env e;
+    address receiver;
+    address owner;
+    redeem@withrevert(e, 0, receiver, owner);
+    assert lastReverted, "redeem should revert on zero assets in previewRedeem";
+}
+
+rule revertOnDepositWithInsufficientBalance()
+{
+    env e;
+    address receiver;
+    require erc20.balanceOf(e.msg.sender) == 0;
+    deposit@withrevert(e, 1, receiver);
+    assert lastReverted, "should revert when insufficient balance";
+}
+
+rule revertOnMintWithInsufficientBalance()
+{
+    env e;
+    address receiver;
+
+    safeAssumptions(e);
+    require erc20.balanceOf(e.msg.sender) == 0;
+    require totalAssets() == 1000;
+    require totalSupply() == 1000;
+
+    mint@withrevert(e, 1000, receiver);
+    assert lastReverted, "should revert when insufficient balance";
+}
+
+rule depositReverts(method f, env e)
+filtered { f -> f.selector == sig:deposit(uint256,address).selector }
+{
+    uint256 assets;
+    uint256 shares;
+    address receiver;
+
+    uint32 depositSelector = sig:deposit(uint256,address).selector;
+    uint32 mintSelector = sig:mint(uint256,address).selector;
+
+    bool revertWhen = (f.selector == depositSelector &&
+                       (assets == 0 ||                                                   // can't deposit zero
+                       e.msg.value != 0 ||                                               // can't send any ETH along
+                       erc20.balanceOf[e.msg.sender] < assets ||                         // must have enough assets
+                       (erc20.allowance[e.msg.sender][currentContract] < assets) ||      // ERC4626 must have enough allowance
+                       (to_mathint(assets) * to_mathint(totalSupply()) > max_uint256) || // large quantity of assets will cause overflow in share calc
+                       (previewDeposit(assets) == 0)                                     // at least 1 wei shares must be minted
+                       ));
+
+    safeAssumptions(e);
+    if (f.selector == depositSelector) {
+        deposit@withrevert(e, assets,receiver);
+    }
+    assert revertWhen <=> lastReverted;
 }
 
 function safeAssumptions(env e) {
