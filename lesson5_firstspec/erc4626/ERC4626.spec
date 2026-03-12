@@ -348,30 +348,26 @@ rule revertOnMintWithInsufficientBalance()
     assert lastReverted, "should revert when insufficient balance";
 }
 
-rule depositReverts(method f, env e)
-filtered { f -> f.selector == sig:deposit(uint256,address).selector }
+rule depositRevertConditions(env e)
 {
     uint256 assets;
     uint256 shares;
     address receiver;
 
     uint32 depositSelector = sig:deposit(uint256,address).selector;
-    uint32 mintSelector = sig:mint(uint256,address).selector;
 
-    bool revertWhen = (f.selector == depositSelector &&
-                       (assets == 0 ||                                                   // can't deposit zero
+    bool depositRevertsWhen =
+                      (assets == 0 ||                                                    // can't deposit zero
                        e.msg.value != 0 ||                                               // can't send any ETH along
                        erc20.balanceOf[e.msg.sender] < assets ||                         // must have enough assets
                        (erc20.allowance[e.msg.sender][currentContract] < assets) ||      // ERC4626 must have enough allowance
                        (to_mathint(assets) * to_mathint(totalSupply()) > max_uint256) || // large quantity of assets will cause overflow in share calc
                        (previewDeposit(assets) == 0)                                     // at least 1 wei shares must be minted
-                       ));
+                       );
 
     safeAssumptions(e);
-    if (f.selector == depositSelector) {
-        deposit@withrevert(e, assets,receiver);
-    }
-    assert revertWhen <=> lastReverted;
+    deposit@withrevert(e, assets,receiver);
+    assert depositRevertsWhen <=> lastReverted;
 }
 
 function safeAssumptions(env e) {
